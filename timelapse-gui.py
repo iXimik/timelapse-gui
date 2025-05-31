@@ -40,7 +40,6 @@ class TimelapseApp(QWidget):
         self.frame_dir = ""
         self.video_dir = ""
         self.camera_indexes = get_working_cameras()
-
         self.init_ui()
 
     def init_ui(self):
@@ -228,30 +227,66 @@ class TimelapseApp(QWidget):
         if not self.video_dir or not self.frame_list:
             QMessageBox.warning(self, "Ошибка", "Нет кадров или не выбрана папка для видео")
             return
+        
+        # Создаем временный файл со списком кадров
         list_file = os.path.join(self.video_dir, "frames.txt")
-        with open(list_file, 'w') as f:
-            for img in self.frame_list:
-                abs_path = os.path.abspath(img).replace("\\", "/")
-                f.write(f"file '{abs_path}'\n")
-                f.write(f"duration {1 / self.fps_slider.value():.6f}\n")
-        output = self.get_next_filename("timelapse")
-        cmd = [
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file,
-            "-vsync", "vfr", "-pix_fmt", "yuv420p", output
-        ]
         try:
-            subprocess.run(cmd, check=True)
-            QMessageBox.information(self, "Готово", f"Видео сохранено: {output}")
-        except subprocess.CalledProcessError as e:
-            QMessageBox.critical(self, "Ошибка ffmpeg", str(e))
-
-        if not self.keep_frames_checkbox.isChecked():
-            for img in self.frame_list:
-                try:
-                    os.remove(img)
-                except:
-                    pass
-        self.frame_list.clear()
+            with open(list_file, 'w', encoding='utf-8') as f:
+                for img in self.frame_list:
+                    # Используем raw-строки и нормализуем пути
+                    img_path = os.path.normpath(img)
+                    f.write(f"file '{img_path}'\n")
+                    f.write(f"duration {1/self.fps_slider.value():.6f}\n")
+            
+            output = self.get_next_filename("timelapse")
+            output_path = os.path.normpath(output)
+            
+            # Формируем команду с правильными путями
+            cmd = [
+                'ffmpeg',
+                '-y',
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', os.path.normpath(list_file),
+                '-vsync', 'vfr',
+                '-pix_fmt', 'yuv420p',
+                output_path
+            ]
+            
+            # Запускаем процесс с захватом вывода
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Ждем завершения
+            stdout, stderr = process.communicate()
+            
+            if process.returncode != 0:
+                error_msg = f"Ошибка ffmpeg (код {process.returncode}):\n{stderr}"
+                QMessageBox.critical(self, "Ошибка ffmpeg", error_msg)
+            else:
+                QMessageBox.information(self, "Готово", f"Видео сохранено: {output_path}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Произошла ошибка: {str(e)}")
+        finally:
+            # Удаляем временный файл
+            try:
+                if os.path.exists(list_file):
+                    os.remove(list_file)
+            except:
+                pass
+            
+            if not self.keep_frames_checkbox.isChecked():
+                for img in self.frame_list:
+                    try:
+                        os.remove(img)
+                    except:
+                        pass
+                self.frame_list.clear()
 
     def take_photo(self):
         ret, frame = self.cap.read()
